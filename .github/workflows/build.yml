@@ -25,7 +25,7 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run ${{ matrix.cmd }} -- --publish never
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: tarabbusat-${{ matrix.os }}
           path: |
