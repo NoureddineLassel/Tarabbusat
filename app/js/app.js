@@ -10,8 +10,7 @@
 
   const STATUS = { accepted: 'b-ok', reserve: 'b-warn', rejected: 'b-bad', ineligible: 'b-bad', ranked: 'b-info' };
   const PROG_COLOR = { conf: '#c2410c', sejour: '#7c3aed', stage: '#1d4ed8', stage_special: '#0f766e', stage_long: '#92400e' };
-  const THEMES = ['green', 'blue', 'bordeaux', 'violet', 'sand', 'dark'];
-
+  
   /* ================= التخزين ================= */
   const clone = o => JSON.parse(JSON.stringify(o));
   function defaults() {
@@ -19,13 +18,13 @@
     return {
       version: 2,
       settings: {
-        structure: clone(window.DEFAULT_STRUCTURE), myFaculty: '',
-        vdName: '', vdTitle: '',
+        structure: clone(window.DEFAULT_STRUCTURE), myFaculty: 'fdsp', myDept: 'sp',
+        vdName: 'د. نورالدين لعسل', vdTitle: 'رئيس القسم المساعد',
         academicYear: now.getMonth() >= 8 ? y + '/' + (y + 1) : (y - 1) + '/' + y,
         fy: String(y), committee: [], seats: {}, groupBy: ['rank'], starsPriority: 'tie',
         followDays: 30, councilName: '', platformClose: {}
       },
-      candidates: []
+      candidates: [], log: []
     };
   }
   function load() {
@@ -36,7 +35,12 @@
         const s = JSON.parse(raw);
         const st = Object.assign(d.settings, s.settings || {});
         if (!st.structure || !Array.isArray(st.structure.faculties)) st.structure = clone(window.DEFAULT_STRUCTURE);
-        return { version: 2, settings: st, candidates: Array.isArray(s.candidates) ? s.candidates : [] };
+        if (!st.vdName) st.vdName = d.settings.vdName;
+        if (!st.vdTitle || /نائب|مساعد مدير/.test(st.vdTitle)) st.vdTitle = d.settings.vdTitle;
+        if (!st.myFaculty) { st.myFaculty = 'fdsp'; st.myDept = st.myDept || 'sp'; }
+        const fsp = st.structure.faculties.find(f => f.id === 'fdsp'), dsp = fsp && fsp.depts.find(x => x.id === 'sp');
+        if (dsp && dsp.ar === 'قسم العلوم السياسية') Object.assign(dsp, window.DEFAULT_STRUCTURE.faculties.find(f => f.id === 'fdsp').depts.find(x => x.id === 'sp'));
+        return { version: 2, settings: st, candidates: Array.isArray(s.candidates) ? s.candidates : [], log: Array.isArray(s.log) ? s.log : [] };
       }
     } catch (e) { console.warn(e); }
     return d;
@@ -133,48 +137,103 @@
     return out;
   }
 
-  /* ================= المظهر واللغة ================= */
+  /* ================= الإطار: الترويسة، شريط العنوان، القائمة ================= */
+  const ic = (n, c) => window.UI_ICONS.icon(n, c);
+  const THEME_SW = { violet: '#5236c8', green: '#117a63', blue: '#2160c4', bordeaux: '#96284d', sand: '#a1661a', dark: '#1a1830' };
+  const DEFAULT_ROLE = 'رئيس القسم المساعد';
+  function roleText() { const r = P().vdTitle || DEFAULT_ROLE; return r === DEFAULT_ROLE ? t('role.default') : r; }
+  function myDept() { const f = facById(P().myFaculty); return f && P().myDept ? f.depts.find(d => d.id === P().myDept) : null; }
+  function alertsList() {
+    if (MODE !== 'admin') return [];
+    const rows = rankingAll().flatMap(gp => gp.rows), out = [];
+    const bad = rows.filter(r => !r.elig.ok).length;
+    if (bad) out.push({ icon: 'alert', c: 'var(--k3)', text: t('al.bad', { n: bad }), href: '#candidates', set: { status: 'bad' } });
+    const df = rows.reduce((a, r) => a + (r.elig.docs ? r.elig.docs.counts.reused + r.elig.docs.counts.before + r.elig.docs.counts.oldReg : 0), 0);
+    if (df) out.push({ icon: 'file', c: 'var(--k1)', text: t('dash.docFlags', { n: df }), href: '#candidates' });
+    const imp = fyCands().filter(c => c.imported && !c.reviewed).length;
+    if (imp) out.push({ icon: 'inbox', c: 'var(--k2)', text: t('al.imported', { n: imp }), href: '#candidates', set: { status: 'imported' } });
+    const pend = followRows().filter(f => f.state === 'late' || f.state === 'pending').length;
+    if (pend) out.push({ icon: 'checkList', c: 'var(--brand)', text: t('dash.follow', { n: pend }), href: '#followup' });
+    return out;
+  }
   function applyPrefs() {
     I.setLang(prefs.lang || 'ar');
     document.documentElement.lang = I.lang;
     document.documentElement.dir = I.dir();
-    document.documentElement.dataset.theme = prefs.theme || 'green';
-    document.title = t('app.title');
-    renderSide();
+    document.documentElement.dataset.theme = prefs.theme || 'violet';
+    document.title = 'Tarabbusat — ' + t('app.title');
+    renderChrome();
   }
-  function renderSide() {
-    const side = document.getElementById('side');
-    const nav = MODE === 'candidate'
-      ? [['mine', '✎', t('nav.mine')], ['guide', '?', t('nav.guide')]]
-      : [['dashboard', '◧', t('nav.dashboard')], ['candidates', '☰', t('nav.candidates')], ['new', '＋', t('nav.new')],
-        ['ranking', '⇅', t('nav.ranking')], ['quotas', '◔', t('nav.quotas')], ['followup', '✓', t('nav.followup')],
-        ['grids', '▤', t('nav.grids')], ['decree', '§', t('nav.decree')], ['structure', '⌂', t('nav.structure')], ['settings', '⚙', t('nav.settings')]];
-    const years = new Set(state.candidates.map(c => String(c.fy)));
-    const y = +P().fy || new Date().getFullYear();
-    [y - 1, y, y + 1].forEach(v => years.add(String(v)));
-    side.innerHTML = `<div class="logo">${t('app.title')}</div>
-      <div class="sub">${esc(instName())}<br>${t('app.sub')}</div>
-      ${MODE === 'candidate' ? `<div class="badge b-warn" style="margin-bottom:10px">${t('mode.candidate')}</div>` : ''}
-      <nav id="nav">${nav.map(([v, ic, l]) => `<a href="#${v}" data-v="${v}"><span class="ic">${ic}</span> ${l}</a>`).join('')}</nav>
-      <div class="fy">
-        ${MODE === 'admin' ? `<label>${t('fy')}<select id="fySelect">${[...years].sort().map(v => `<option ${v === String(P().fy) ? 'selected' : ''}>${v}</option>`).join('')}</select></label>` : ''}
-        <label>${t('lang')}<select id="langSelect">${[['ar', 'العربية'], ['fr', 'Français'], ['en', 'English']].map(([k, l]) => `<option value="${k}" ${I.lang === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-        <label>${t('theme')}<select id="themeSelect">${THEMES.map(k => `<option value="${k}" ${(prefs.theme || 'green') === k ? 'selected' : ''}>${t('theme.' + k)}</option>`).join('')}</select></label>
+  function renderChrome() {
+    const U = window.UI_ICONS, st = P(), f = facById(st.myFaculty), d = myDept();
+    const al = alertsList();
+    document.getElementById('hdr').innerHTML = `
+      <div class="brand">${U.logo}<span class="wordmark">Tarabbusat</span></div>
+      <div class="vsep"></div>
+      <div class="inst"><b>${esc(instName())}</b>${f ? `<span>${esc(nm(f))}</span>` : ''}${d ? `<span>${esc(nm(d))}</span>` : ''}</div>
+      <div class="hero-wrap">${U.hero}</div>
+      <div class="tools">
+        <div class="tools-row">
+          <div class="seg" role="group" aria-label="${t('lang')}">${[['ar', 'ع'], ['fr', 'FR'], ['en', 'EN']].map(([k, l]) => `<button class="${I.lang === k ? 'on' : ''}" data-act="set-lang" data-v="${k}" title="${k === 'ar' ? 'العربية' : k === 'fr' ? 'Français' : 'English'}">${l}</button>`).join('')}</div>
+          <div class="seg" role="group" aria-label="${t('theme')}">${Object.entries(THEME_SW).map(([k, c]) => `<button class="swatch ${(prefs.theme || 'violet') === k ? 'on' : ''}" style="background:${c}" data-act="set-theme" data-v="${k}" title="${t('theme.' + k)}" aria-label="${t('theme.' + k)}"></button>`).join('')}</div>
+        </div>
+        <div class="tools-row">
+          <button class="icon-btn menu-btn" data-act="menu" title="${t('menu')}">${ic('menu')}</button>
+          ${MODE === 'admin' ? `<a class="icon-btn" href="#settings" title="${t('nav.settings')}">${ic('settings')}</a>
+          <button class="icon-btn" data-act="bell" title="${t('notifications')}">${ic('bell')}${al.length ? `<span class="dotn">${al.length}</span>` : ''}</button>
+          <button class="profile" data-act="profile"><span class="av">${prefs.avatar ? `<img src="${esc(prefs.avatar)}" alt="">` : U.avatar}</span>
+            <span><b dir="auto">${esc(st.vdName || '')}</b><small dir="auto">${esc(roleText())}</small></span>${ic('chevron')}</button>` : `<span class="badge b-warn">${t('mode.candidate')}</span>`}
+        </div>
       </div>`;
+    document.getElementById('banner').innerHTML = `<div class="banner-in"><span class="bic">${ic('plane')}</span><div><h1>${MODE === 'candidate' ? t('banner.cand') : t('banner.title')}</h1><p>${t('banner.sub')}</p></div></div>`;
+    const nav = MODE === 'candidate'
+      ? [['mine', 'file', t('nav.mine')], ['guide', 'book', t('nav.guide')]]
+      : [['dashboard', 'home', t('nav.home')], ['candidates', 'folder', t('nav.candidates')], ['new', 'filePlus', t('nav.new')],
+        ['ranking', 'ranking', t('nav.ranking')], ['quotas', 'pie', t('nav.quotas')], ['followup', 'checkList', t('nav.followup')],
+        ['grids', 'grid', t('nav.grids')], ['decree', 'scale', t('nav.decree')], ['structure', 'building', t('nav.structure')], ['settings', 'settings', t('nav.settings')]];
+    const years = new Set(state.candidates.map(c => String(c.fy)));
+    const y = +st.fy || new Date().getFullYear();
+    [y - 1, y, y + 1].forEach(v => years.add(String(v)));
+    document.getElementById('side').innerHTML = `<nav id="nav">${nav.map(([v, i, l]) => `<a href="#${v}" data-v="${v}">${ic(i)}<span>${l}</span></a>`).join('')}</nav>
+      ${MODE === 'admin' ? `<div class="fy"><label>${t('fy')}<select id="fySelect">${[...years].sort().map(v => `<option ${v === String(st.fy) ? 'selected' : ''}>${v}</option>`).join('')}</select></label></div>` : ''}
+      <div class="ver">Tarabbusat 1.2</div><div class="side-globe">${ic('globe')}</div>`;
     const fy = document.getElementById('fySelect');
-    if (fy) fy.onchange = e => { P().fy = e.target.value; save(); route(); };
-    document.getElementById('langSelect').onchange = e => { prefs.lang = e.target.value; savePrefs(); applyPrefs(); route(); };
-    document.getElementById('themeSelect').onchange = e => { prefs.theme = e.target.value; savePrefs(); applyPrefs(); markNav(); };
+    if (fy) fy.onchange = e => { P().fy = e.target.value; save(); renderChrome(); route(); };
     markNav();
   }
+  function renderSide() { renderChrome(); }
   function markNav() {
-    const v = (location.hash.slice(1) || '').split('/')[0];
+    const v = (location.hash.slice(1) || '').split('/')[0] || (MODE === 'candidate' ? 'mine' : 'dashboard');
     document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.v === v || (v === 'edit' && a.dataset.v === 'candidates')));
+  }
+  function closePop() { document.getElementById('pop').classList.remove('on'); }
+  function openPop(anchor, html) {
+    const p = document.getElementById('pop');
+    p.innerHTML = html; p.classList.add('on');
+    const r = anchor.getBoundingClientRect(), w = p.offsetWidth;
+    let left = I.dir() === 'rtl' ? r.left : r.right - w;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    p.style.left = left + 'px'; p.style.top = (r.bottom + 8) + 'px';
+  }
+  document.addEventListener('click', e => { const p = document.getElementById('pop'); if (p.classList.contains('on') && !p.contains(e.target) && !e.target.closest('[data-act=bell],[data-act=profile]')) closePop(); });
+  document.getElementById('scrim').addEventListener('click', () => { document.getElementById('side').classList.remove('open'); document.getElementById('scrim').classList.remove('on'); });
+
+  /* سجل الأنشطة */
+  const ACT_STYLE = { add: ['plus', 'var(--ok)'], import: ['inbox', 'var(--k2)'], del: ['trash', 'var(--k3)'], decision: ['check', 'var(--brand)'], demo: ['grid', 'var(--k1)'], xlsx: ['upload', 'var(--k2)'], restore: ['history', 'var(--muted)'] };
+  function logAct(type, vars) {
+    state.log = state.log || [];
+    state.log.unshift({ type, vars: vars || {}, at: Date.now() });
+    if (state.log.length > 300) state.log.length = 300;
+  }
+  function actHTML(a) {
+    const s = ACT_STYLE[a.type] || ['info', 'var(--muted)'];
+    const d = new Date(a.at), when = d.toISOString().slice(0, 10) + ' ' + d.toTimeString().slice(0, 5);
+    return `<div class="act"><span class="aic" style="--ac:${s[1]}">${ic(s[0])}</span><span>${t('act.' + a.type, a.vars)}</span><time>${when}</time></div>`;
   }
 
   /* ================= التوجيه ================= */
   let cur = null, edTab = 'info';
-  const filt = { q: '', grid: '', fac: '', status: '', sort: 'recent' };
+  const filt = { q: '', grid: '', fac: '', country: '', status: '', sort: 'recent' };
   let rankGrid = '';
 
   function route() {
@@ -204,73 +263,126 @@
   }
   window.addEventListener('hashchange', route);
   function topbar(title, actions) {
-    return `<div class="topbar"><div class="btns"><button class="btn menu-btn" data-act="menu">☰</button><h1>${title}</h1></div><div class="btns">${actions || ''}</div></div>`;
+    return `<div class="topbar"><h1>${title}</h1><div class="btns">${actions || ''}</div></div>`;
   }
 
-  /* ================= لوحة القيادة ================= */
+  /* ================= الرئيسية (لوحة القيادة) ================= */
+  function kpi(color, iconName, value, label, href) {
+    return `<a class="kpi" style="--kc:${color}" href="${href}"><div><b>${value}</b><span>${label}</span></div><span class="kic">${ic(iconName)}</span></a>`;
+  }
+  function donutSVG(parts, total) {
+    const R = 70, C = 2 * Math.PI * R, gap = total > 1 ? 3 : 0;
+    let off = 0, arcs = '';
+    for (const p of parts) {
+      if (!p.n) continue;
+      const len = Math.max(0, p.n / total * C - gap);
+      arcs += `<circle class="seg-arc" cx="95" cy="95" r="${R}" fill="none" stroke="${p.c}" stroke-width="22" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 95 95)"><title>${esc(p.label)}: ${p.n}</title></circle>`;
+      off += p.n / total * C;
+    }
+    if (!total) arcs = `<circle cx="95" cy="95" r="${R}" fill="none" stroke="var(--line)" stroke-width="22"/>`;
+    return `<svg class="donut" viewBox="0 0 190 190" role="img" aria-label="${t('dash.stats')}">${arcs}
+      <text x="95" y="96" text-anchor="middle" font-size="40" font-weight="700">${total}</text>
+      <text x="95" y="122" text-anchor="middle" font-size="13" style="fill:var(--muted)">${t('dash.totalFiles')}</text></svg>`;
+  }
+  function trendSVG() {
+    const fy = +P().fy, now = new Date();
+    const lastM = fy < now.getFullYear() ? 11 : fy > now.getFullYear() ? 0 : now.getMonth();
+    const cands = fyCands();
+    const vals = [];
+    for (let m = 0; m <= lastM; m++) {
+      const end = new Date(fy, m + 1, 1).getTime();
+      vals.push(cands.filter(c => (c.importedAt || c.createdAt || 0) < end).length);
+    }
+    const W = 640, H = 220, L = 34, Rt = 16, T = 18, B = 30;
+    const max = Math.max(3, ...vals), step = Math.max(1, Math.ceil(max / 4));
+    const top = step * 4;
+    const x = i => vals.length === 1 ? (L + (W - Rt)) / 2 : L + i * (W - L - Rt) / (vals.length - 1);
+    const y = v => T + (H - T - B) * (1 - v / top);
+    let g = '';
+    for (let k = 0; k <= 4; k++) { const v = k * step; g += `<line class="gl" x1="${L}" x2="${W - Rt}" y1="${y(v)}" y2="${y(v)}"/><text class="ax" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`; }
+    const mon = i => new Date(fy, i, 1).toLocaleDateString(I.locale(), { month: 'short' });
+    const every = vals.length > 8 ? 2 : 1;
+    vals.forEach((v, i) => { if (i % every === 0 || i === vals.length - 1) g += `<text class="ax" x="${x(i)}" y="${H - 8}" text-anchor="middle">${mon(i)}</text>`; });
+    const pts = vals.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+    const area = vals.length > 1 ? `<polygon class="ar" points="${x(0)},${y(0)} ${pts} ${x(vals.length - 1)},${y(0)}"/>` : '';
+    const dots = vals.map((v, i) => `<g><circle class="hit" cx="${x(i)}" cy="${y(v)}" r="14"><title>${mon(i)} ${fy}: ${v}</title></circle><circle class="pt" cx="${x(i)}" cy="${y(v)}" r="4.5"/></g>`).join('');
+    const li = vals.length - 1;
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${t('dash.trend')}"><defs><linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--brand)" stop-opacity=".22"/><stop offset="1" stop-color="var(--brand)" stop-opacity="0"/></linearGradient></defs>
+      ${g}${area}${vals.length > 1 ? `<polyline class="ln" points="${pts}"/>` : ''}${dots}<text class="vl" x="${x(li)}" y="${y(vals[li]) - 12}" text-anchor="middle">${vals[li]}</text></svg>`;
+  }
   function viewDashboard() {
     const rows = rankingAll().flatMap(gp => gp.rows);
-    const n = rows.length, ok = rows.filter(r => r.elig.ok).length, acc = rows.filter(r => r.status === 'accepted').length;
-    let h = topbar(t('nav.dashboard'), `<a class="btn primary" href="#new">＋ ${t('nav.new')}</a>`);
-    if (!n) {
-      h += `<div class="card"><h2>${t('welcome.title')}</h2><p>${t('welcome.p', { fy: esc(P().fy), inst: esc(instName()) })}</p>
-        <ol><li>${t('welcome.1')}</li><li>${t('welcome.2')}</li><li>${t('welcome.3')}</li><li>${t('welcome.4')}</li></ol>
-        <div class="btns"><a class="btn primary" href="#new">＋ ${t('welcome.first')}</a><button class="btn" data-act="import-packages">${t('btn.importPackages')}</button>
-        <button class="btn" data-act="import-xlsx">${t('btn.importXlsx')}</button><button class="btn" data-act="demo">${t('btn.demo')}</button></div></div>`;
-      h += candidateLinkCard();
-      main.innerHTML = h; return;
-    }
-    h += `<div class="grid4">
-      <div class="card stat"><b>${n}</b><span>${t('dash.files', { fy: esc(P().fy) })}</span></div>
-      <div class="card stat"><b style="color:var(--ok)">${ok}</b><span>${t('dash.ok')}</span></div>
-      <div class="card stat"><b style="color:var(--bad)">${n - ok}</b><span>${t('dash.bad')}</span></div>
-      <div class="card stat"><b>${acc}</b><span>${t('dash.acc')}</span></div></div>`;
-    h += `<div class="card"><h2>${t('dash.byGrid')}</h2><div class="tbl-wrap"><table class="t"><thead><tr>
-      <th>${t('f.grid')}</th><th class="num">${t('dash.nFiles')}</th><th class="num">${t('dash.nOk')}</th><th class="num">${t('dash.nAcc')}</th><th class="num">${t('dash.best')}</th><th class="num">${t('dash.avg')}</th><th></th></tr></thead><tbody>`;
-    for (const gr of D.GRIDS) {
-      const gs = rows.filter(r => r.cand.gridId === gr.id);
-      if (!gs.length) continue;
-      const okr = gs.filter(r => r.elig.ok);
-      const best = okr.length ? Math.max(...okr.map(r => r.score)) : 0;
-      const avg = okr.length ? okr.reduce((a, r) => a + r.score, 0) / okr.length : 0;
-      h += `<tr><td><b>${esc(code(gr))}</b> ${esc(g(gr.title))}<div class="small muted">${esc(g(gr.population))}</div></td>
-        <td class="num">${gs.length}</td><td class="num">${okr.length}</td><td class="num">${gs.filter(r => r.status === 'accepted').length}</td>
-        <td class="num">${gr.noScoring ? '—' : fmt(best)}</td><td class="num">${gr.noScoring ? '—' : fmt(avg)}</td>
-        <td><button class="btn sm" data-act="goto-rank" data-g="${gr.id}">${t('nav.ranking')}</button></td></tr>`;
-    }
-    h += `</tbody></table></div></div>`;
-    // حسب الكلية
-    const byFac = {};
-    rows.forEach(r => { const k = r.cand.facultyId || ''; (byFac[k] = byFac[k] || []).push(r); });
-    h += `<div class="card"><h2>${t('dash.byFaculty')}</h2><div class="fac-bars">`;
-    for (const [k, list] of Object.entries(byFac).sort((a, b) => b[1].length - a[1].length)) {
-      const f = facById(k);
-      h += `<div class="fac-bar"><span class="dot" style="background:${f ? f.color : '#94a3b8'}"></span><span class="nm">${esc(f ? nm(f) : t('noFaculty'))}</span>
-        <span class="bar"><i style="width:${Math.round(list.length / n * 100)}%;background:${f ? f.color : '#94a3b8'}"></i></span><b>${list.length}</b></div>`;
-    }
-    h += `</div></div>`;
-    const bad = rows.filter(r => !r.elig.ok);
-    if (bad.length) {
-      h += `<div class="card"><h2>${t('dash.review')}</h2><div class="tbl-wrap"><table class="t"><tbody>`;
-      for (const r of bad.slice(0, 15)) {
-        const gr = S.gridById(r.cand.gridId);
-        h += `<tr><td>${facChip(r.cand)}<a href="#edit/${r.cand.id}">${esc(fullName(r.cand))}</a><div class="small muted">${esc(gr ? code(gr) : '—')} · ${esc(deptName(r.cand))}</div></td><td class="small" style="color:var(--bad)">${esc(r.elig.reasons.join(' — '))}</td></tr>`;
+    const n = rows.length, ok = rows.filter(r => r.elig.ok).length;
+    const acc = rows.filter(r => r.status === 'accepted').length;
+    const cnt = s => rows.filter(r => r.status === s).length;
+    let h = `<div class="kpis">
+      ${kpi('var(--k1)', 'plane', n, t('dash.files', { fy: esc(P().fy) }), '#candidates')}
+      ${kpi('var(--k2)', 'check', ok, t('dash.ok'), '#candidates')}
+      ${kpi('var(--k3)', 'alert', n - ok, t('dash.bad'), '#candidates')}
+      ${kpi('var(--k4)', 'file', acc, t('dash.acc'), '#ranking')}</div>`;
+    if (!n) h += `<div class="card"><div class="ch"><h2>${ic('info')}${t('welcome.title')}</h2></div><p>${t('welcome.p', { fy: esc(P().fy), inst: esc(instName()) })}</p>
+      <ol><li>${t('welcome.1')}</li><li>${t('welcome.2')}</li><li>${t('welcome.3')}</li><li>${t('welcome.4')}</li></ol>
+      <div class="btns"><a class="btn primary" href="#new">${ic('plus')}${t('welcome.first')}</a><button class="btn" data-act="import-packages">${ic('inbox')}${t('btn.importPackages')}</button><button class="btn" data-act="demo">${t('btn.demo')}</button></div></div>`;
+    const parts = [
+      { label: t('st.accepted'), n: acc, c: 'var(--ok)' },
+      { label: t('dash.inRanking'), n: cnt('ranked'), c: 'var(--k2)' },
+      { label: t('st.reserve'), n: cnt('reserve'), c: 'var(--k1)' },
+      { label: t('dash.bad'), n: cnt('ineligible') + cnt('rejected'), c: 'var(--k3)' }];
+    h += `<div class="dash-row">
+      <div class="card trend"><div class="ch"><h2>${ic('trend')}${t('dash.trend')}</h2><span class="small muted">${esc(P().fy)}</span></div>${trendSVG()}</div>
+      <div class="card"><div class="ch"><h2>${ic('ranking')}${t('dash.stats')}</h2></div><div class="donut-wrap">
+        <div class="legend">${parts.map(p => `<div><i style="background:${p.c}"></i><b>${p.n}</b><span>${p.label}</span></div>`).join('')}</div>${donutSVG(parts, n)}</div></div></div>`;
+    // التصفية السريعة + آخر الأنشطة
+    const years = [...new Set(state.candidates.map(c => String(c.fy)).concat([String(P().fy)]))].sort();
+    const countries = [...new Set(fyCands().map(c => (c.country || '').trim()).filter(Boolean))].sort();
+    const log = state.log || [];
+    h += `<div class="dash-row">
+      <div class="card"><div class="ch"><h2>${ic('filter')}${t('qf.title')}</h2></div><div class="qf"><div class="qf-rows">
+        <div class="qf-row"><span>${t('fy')}</span><select id="qf-fy">${years.map(v => `<option ${v === String(P().fy) ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        <div class="qf-row"><span>${t('f.faculty')}</span><select id="qf-fac"><option value="">${t('allFaculties')}</option>${facs().map(f => `<option value="${f.id}">${esc(nm(f))}</option>`).join('')}</select></div>
+        <div class="qf-row"><span>${t('f.country')}</span><select id="qf-ct"><option value="">${t('allCountries')}</option>${countries.map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
+        <div class="qf-row"><span>${t('f.status')}</span><select id="qf-st"><option value="">${t('all')}</option><option value="ok">${t('dash.ok')}</option><option value="bad">${t('dash.bad')}</option><option value="accepted">${t('st.accepted')}</option><option value="imported">${t('importedFromCand')}</option></select></div>
+        <button class="btn primary block" data-act="qf-go">${ic('search')}${t('search')}</button></div>${window.UI_ICONS.globeBooks}</div></div>
+      <div class="card"><div class="ch"><h2>${ic('history')}${t('dash.activity')}</h2></div>
+        ${log.length ? `<div class="acts">${log.slice(0, 5).map(actHTML).join('')}</div>${log.length > 5 ? `<button class="btn sm" data-act="more-acts" style="margin-top:10px">${t('more')}</button>` : ''}` : `<div class="empty small">${t('dash.noActivity')}</div>`}</div></div>`;
+    // معلومات مهمة + روابط سريعة
+    const al = alertsList();
+    h += `<div class="dash-row">
+      <div class="card"><div class="ch"><h2>${ic('lightbulb')}${t('dash.info')}</h2></div>
+        ${(al.length ? al.slice(0, 3) : [{ icon: 'info', text: t('dash.tip') }]).map(a => `<div class="infobox"><span class="iic" style="${a.c ? 'background:' + a.c : ''}">${ic(a.icon)}</span><span>${a.text}${a.href ? ` <a href="${a.href}">${t('open')}</a>` : ''}</span></div>`).join('')}</div>
+      <div class="card"><div class="ch"><h2>${ic('link')}${t('dash.links')}</h2></div><div class="qlinks">
+        <button class="qlink" style="--qc:var(--k2)" data-act="copy-link">${ic('link')}${t('ql.candLink')}</button>
+        <a class="qlink" style="--qc:var(--k1)" href="#ranking">${ic('ranking')}${t('ql.reports')}</a>
+        <button class="qlink" style="--qc:var(--brand)" data-act="xlsx-template">${ic('download')}${t('ql.templates')}</button>
+        <a class="qlink" style="--qc:var(--ok)" href="#grids">${ic('book')}${t('ql.guide')}</a></div></div></div>`;
+    if (n) {
+      h += `<div class="card"><div class="ch"><h2>${ic('grid')}${t('dash.byGrid')}</h2></div><div class="tbl-wrap"><table class="t"><thead><tr>
+        <th>${t('f.grid')}</th><th class="num">${t('dash.nFiles')}</th><th class="num">${t('dash.nOk')}</th><th class="num">${t('dash.nAcc')}</th><th class="num">${t('dash.best')}</th><th class="num">${t('dash.avg')}</th><th></th></tr></thead><tbody>`;
+      for (const gr of D.GRIDS) {
+        const gs = rows.filter(r => r.cand.gridId === gr.id);
+        if (!gs.length) continue;
+        const okr = gs.filter(r => r.elig.ok);
+        const best = okr.length ? Math.max(...okr.map(r => r.score)) : 0;
+        const avg = okr.length ? okr.reduce((a, r) => a + r.score, 0) / okr.length : 0;
+        h += `<tr><td><b>${esc(code(gr))}</b> ${esc(g(gr.title))}<div class="small muted">${esc(g(gr.population))}</div></td>
+          <td class="num">${gs.length}</td><td class="num">${okr.length}</td><td class="num">${gs.filter(r => r.status === 'accepted').length}</td>
+          <td class="num">${gr.noScoring ? '—' : fmt(best)}</td><td class="num">${gr.noScoring ? '—' : fmt(avg)}</td>
+          <td><button class="btn sm" data-act="goto-rank" data-g="${gr.id}">${t('nav.ranking')}</button></td></tr>`;
       }
       h += `</tbody></table></div></div>`;
+      const byFac = {};
+      rows.forEach(r => { const k = r.cand.facultyId || ''; (byFac[k] = byFac[k] || []).push(r); });
+      h += `<div class="card"><div class="ch"><h2>${ic('building')}${t('dash.byFaculty')}</h2></div><div class="fac-bars">`;
+      for (const [k, list] of Object.entries(byFac).sort((a, b) => b[1].length - a[1].length)) {
+        const f = facById(k);
+        h += `<div class="fac-bar"><span class="dot" style="background:${f ? f.color : '#94a3b8'}"></span><span class="nm">${esc(f ? nm(f) : t('noFaculty'))}</span>
+          <span class="bar"><i style="width:${Math.round(list.length / n * 100)}%;background:${f ? f.color : '#94a3b8'}"></i></span><b>${list.length}</b></div>`;
+      }
+      h += `</div></div>`;
     }
-    const docFlags = rows.reduce((a, r) => a + (r.elig.docs ? r.elig.docs.counts.reused + r.elig.docs.counts.before + r.elig.docs.counts.oldReg : 0), 0);
-    if (docFlags) h += `<div class="alert warn">${t('dash.docFlags', { n: docFlags })}</div>`;
-    const pend = followRows().filter(f => f.state === 'late' || f.state === 'pending');
-    if (pend.length) h += `<div class="alert warn">${t('dash.follow', { n: pend.length })} <a href="#followup">${t('nav.followup')}</a></div>`;
-    h += candidateLinkCard();
     main.innerHTML = h;
   }
   function candidateUrl() { return location.href.split('#')[0].split('?')[0] + '?mode=candidate'; }
-  function candidateLinkCard() {
-    return `<div class="card"><h2>${t('cl.title')}</h2><p class="small">${t('cl.p')}</p>
-      <div class="btns"><input type="text" readonly class="sel-all" value="${esc(candidateUrl())}" style="flex:1;min-width:240px">
-      <button class="btn" data-act="copy-link">${t('cl.copy')}</button><button class="btn primary" data-act="import-packages">${t('btn.importPackages')}</button></div></div>`;
-  }
 
   /* ================= قائمة الملفات ================= */
   function viewCandidates() {
@@ -307,6 +419,7 @@
       const r = map[c.id];
       if (filt.grid && c.gridId !== filt.grid) return false;
       if (filt.fac && c.facultyId !== filt.fac) return false;
+      if (filt.country && (c.country || '').trim() !== filt.country) return false;
       if (filt.status === 'ok' && !(r && r.elig.ok)) return false;
       if (filt.status === 'bad' && r && r.elig.ok) return false;
       if (filt.status === 'accepted' && !(r && r.status === 'accepted')) return false;
@@ -351,7 +464,7 @@
   }
   function newCandidate(gridId) {
     const c = blankCandidate(gridId);
-    state.candidates.push(c); save();
+    state.candidates.push(c); logAct('add', {}); save();
     edTab = 'info';
     history.replaceState(null, '', '#edit/' + c.id);
     route();
@@ -364,6 +477,7 @@
   function viewEditor(id) {
     const c = candById(id);
     if (!c) { main.innerHTML = topbar(t('notFound')) + `<div class="card empty"><a href="#candidates">${t('backList')}</a></div>`; return; }
+    if (MODE === 'admin' && c.imported && !c.reviewed) { c.reviewed = true; save(); }
     cur = c; renderEditor();
   }
   function edTabs() {
@@ -716,6 +830,7 @@
           if (gr && !gr.programs.includes(cur.program)) cur.program = gr.programs[0];
         }
         if (f === 'facultyId') cur.deptId = '';
+        if (f === 'decision') logAct('decision', { name: fullName(cur), d: t('dec.' + cur.decision) });
         if (f === 'regCount') { const gr = S.gridById(cur.gridId); if (gr && gr.criteria.some(x => x.id === 'reg')) { cur.scores = cur.scores || {}; cur.scores.reg = cur.scores.reg || {}; if (cur.scores.reg.y == null || cur.scores.reg.y === '') cur.scores.reg.y = cur.regCount; } }
         if (f === 'lastBenefitYear') { const pc = (P().platformClose || {})[cur.lastBenefitYear]; if (pc && !cur.cutoffDate) cur.cutoffDate = pc; }
         save(); renderEditor(); return;
@@ -747,7 +862,7 @@
       else if (k.startsWith('groupBy:')) { const gb = new Set(P().groupBy || []); el.checked ? gb.add(k.slice(8)) : gb.delete(k.slice(8)); P().groupBy = [...gb]; }
       else if (k.startsWith('pc:')) { P().platformClose = P().platformClose || {}; P().platformClose[k.slice(3)] = el.value; }
       else if (k.startsWith('inst:')) P().structure.institution[k.slice(5)] = el.value;
-      else P()[k] = el.value;
+      else { P()[k] = el.value; if (k === 'myFaculty') P().myDept = ''; }
       save();
       if (isChange && el.dataset.rerender) { renderSide(); route(); }
       return;
@@ -759,7 +874,7 @@
       save(); return;
     }
     if (el.dataset.seat != null && isChange) { P().seats[el.dataset.seat] = el.value; save(); viewRanking(true); return; }
-    if (el.dataset.dec && isChange) { candById(el.dataset.dec).decision = el.value; save(); viewRanking(true); return; }
+    if (el.dataset.dec && isChange) { const c = candById(el.dataset.dec); c.decision = el.value; logAct('decision', { name: fullName(c), d: t('dec.' + el.value) }); save(); viewRanking(true); return; }
     if (el.dataset.fu) {
       const c = candById(el.dataset.id); c.followup = c.followup || {};
       const k = el.dataset.fu;
@@ -778,7 +893,35 @@
     if (!b) return;
     const act = b.dataset.act;
     switch (act) {
-      case 'menu': document.getElementById('side').classList.toggle('open'); break;
+      case 'menu': { const o = document.getElementById('side').classList.toggle('open'); document.getElementById('scrim').classList.toggle('on', o); break; }
+      case 'set-lang': prefs.lang = b.dataset.v; savePrefs(); applyPrefs(); route(); break;
+      case 'set-theme': prefs.theme = b.dataset.v; savePrefs(); applyPrefs(); break;
+      case 'bell': {
+        const al = alertsList();
+        openPop(b, `<div class="ph">${t('notifications')}</div>` + (al.length ? al.map((a, i) => `<a href="${a.href}" data-act="al-go" data-i="${i}">${ic(a.icon)}<span>${a.text}</span></a>`).join('') : `<div class="ph" style="font-weight:400">${t('noAlerts')}</div>`));
+        break;
+      }
+      case 'al-go': { const a = alertsList()[+b.dataset.i]; if (a && a.set) Object.assign(filt, { q: '', grid: '', fac: '', country: '', status: '' }, a.set); closePop(); if (a && location.hash === a.href) setTimeout(route, 0); break; }
+      case 'profile':
+        openPop(b, `<div class="ph">${esc(P().vdName || '')} — ${esc(roleText())}</div>
+          <button class="pi" data-act="avatar">${ic('user')}${t('pop.photo')}</button>
+          ${prefs.avatar ? `<button class="pi" data-act="avatar-del">${ic('x')}${t('pop.removePhoto')}</button>` : ''}
+          <a href="#settings">${ic('settings')}${t('nav.settings')}</a><a href="#structure">${ic('building')}${t('nav.structure')}</a>
+          <button class="pi" data-act="copy-link">${ic('link')}${t('ql.candLink')}</button>
+          <button class="pi" data-act="backup-files">${ic('download')}${t('set.backupFiles')}</button>`);
+        break;
+      case 'avatar': closePop(); pickFile('image/*', fs => resizeAvatar(fs[0])); break;
+      case 'avatar-del': delete prefs.avatar; savePrefs(); closePop(); renderChrome(); break;
+      case 'qf-go':
+        P().fy = document.getElementById('qf-fy').value; save();
+        Object.assign(filt, { q: '', grid: '', fac: document.getElementById('qf-fac').value, country: document.getElementById('qf-ct').value, status: document.getElementById('qf-st').value });
+        renderChrome(); location.hash = '#candidates'; break;
+      case 'more-acts': {
+        const m = document.getElementById('modal'), bd = document.getElementById('modalBody');
+        bd.innerHTML = `<h2 style="margin-top:0">${t('dash.activity')}</h2><div class="acts">${(state.log || []).slice(0, 60).map(actHTML).join('')}</div><div class="btns" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-m="no">${t('close')}</button></div>`;
+        m.classList.add('on'); bd.onclick = e => { if (e.target.getAttribute('data-m')) { m.classList.remove('on'); bd.onclick = null; } };
+        break;
+      }
       case 'tab': edTab = b.dataset.t; renderEditor(); window.scrollTo(0, 0); break;
       case 'add-entry': {
         const gr = S.gridById(cur.gridId), crit = gr.criteria.find(x => x.id === b.dataset.c);
@@ -820,7 +963,7 @@
       case 'del-cand': {
         const c = candById(b.dataset.id);
         confirmBox(t('confirmDel', { name: esc(fullName(c)) }), () => {
-          state.candidates = state.candidates.filter(x => x.id !== c.id); save(true);
+          state.candidates = state.candidates.filter(x => x.id !== c.id); logAct('del', { name: fullName(c) }); save(true);
           toast(t('deleted'));
           if (location.hash.startsWith('#edit')) location.hash = '#candidates'; else route();
         }, t('delete'));
@@ -842,7 +985,7 @@
       case 'import-packages': pickFile('.json,application/json', importPackages, true); break;
       case 'export-package': exportPackage(cur); break;
       case 'cand-reset': confirmBox(t('confirmReset'), () => { state.candidates = [blankCandidate('')]; save(true); edTab = 'info'; route(); }, t('confirm')); break;
-      case 'copy-link': (navigator.clipboard ? navigator.clipboard.writeText(candidateUrl()) : Promise.reject()).then(() => toast(t('copied')), () => toast(candidateUrl())); break;
+      case 'copy-link': closePop(); (navigator.clipboard ? navigator.clipboard.writeText(candidateUrl()) : Promise.reject()).then(() => toast(t('copied') + ': ' + candidateUrl()), () => toast(candidateUrl())); break;
       case 'backup': backup(false); break;
       case 'backup-files': backup(true); break;
       case 'restore': pickFile('.json', fs => restore(fs[0])); break;
@@ -860,6 +1003,16 @@
     }
   });
 
+  function resizeAvatar(file) {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const k = Math.min(img.width, img.height), cx = c.getContext('2d');
+      cx.drawImage(img, (img.width - k) / 2, (img.height - k) / 2, k, k, 0, 0, 128, 128);
+      prefs.avatar = c.toDataURL('image/jpeg', 0.85); savePrefs(); URL.revokeObjectURL(url); renderChrome();
+    };
+    img.src = url;
+  }
   function pickFile(accept, cb, multiple) {
     const inp = document.getElementById('fileInput');
     inp.value = ''; inp.accept = accept; inp.multiple = !!multiple;
@@ -909,6 +1062,7 @@
         n++;
       } catch (e) { console.error(e); bad++; }
     }
+    if (n) logAct('import', { n });
     save(true);
     toast(t('importedPk', { n, f: nf }) + (bad ? ' — ' + t('badFiles', { n: bad }) : ''));
     if (MODE === 'admin') { if (location.hash !== '#candidates') location.hash = '#candidates'; else route(); }
@@ -1088,7 +1242,8 @@
     let h = topbar(t('nav.structure'), `<button class="btn" data-act="fac-add">＋ ${t('st.addFac')}</button><button class="btn danger" data-act="struct-reset">${t('st.reset')}</button>`);
     h += `<div class="card"><h2>${t('st.institution')}</h2><div class="grid3">
       ${['ar', 'fr', 'en'].map(l => `<label class="f"><span>${l.toUpperCase()}</span><input type="text" data-set="inst:${l}" data-rerender="1" value="${esc(st.institution[l] || '')}" ${l === 'ar' ? 'dir="rtl"' : 'dir="ltr"'}></label>`).join('')}</div>
-      <label class="f" style="margin-top:10px"><span>${t('st.myFaculty')}</span><select data-set="myFaculty"><option value="">${t('st.wholeUniv')}</option>${st.faculties.map(f => `<option value="${f.id}" ${f.id === P().myFaculty ? 'selected' : ''}>${esc(nm(f))}</option>`).join('')}</select></label>
+      <label class="f" style="margin-top:10px"><span>${t('st.myFaculty')}</span><select data-set="myFaculty" data-rerender="1"><option value="">${t('st.wholeUniv')}</option>${st.faculties.map(f => `<option value="${f.id}" ${f.id === P().myFaculty ? 'selected' : ''}>${esc(nm(f))}</option>`).join('')}</select></label>
+      ${(() => { const f = facById(P().myFaculty); return f ? `<label class="f" style="margin-top:10px"><span>${t('st.myDept')}</span><select data-set="myDept" data-rerender="1"><option value="">—</option>${f.depts.map(d => `<option value="${d.id}" ${d.id === P().myDept ? 'selected' : ''}>${esc(nm(d))}</option>`).join('')}</select></label>` : ''; })()}
       <p class="small muted">${t('st.hint')}</p></div>`;
     st.faculties.forEach((f, i) => {
       h += `<div class="card fac-card" style="--c:${f.color}"><div class="group-h"><h3><span class="dot" style="background:${f.color}"></span>${esc(nm(f) || t('st.newFac'))}</h3>
@@ -1136,7 +1291,7 @@
         if (s.files) await F.importFiles(s.files);
         const st = Object.assign(defaults().settings, s.settings || {});
         if (!st.structure) st.structure = clone(window.DEFAULT_STRUCTURE);
-        state = { version: 2, settings: st, candidates: s.candidates };
+        state = { version: 2, settings: st, candidates: s.candidates, log: s.log || [] }; logAct('restore', { n: s.candidates.length });
         save(true); renderSide(); toast(t('restored')); route();
       }, t('set.restore'));
     }).catch(() => toast(t('badFile')));
@@ -1227,7 +1382,7 @@
         c.email = get(row, 'email'); c.phone = get(row, 'phone');
         state.candidates.push(c); n++;
       }
-      save(true); toast(t('importedN', { n })); location.hash = '#candidates'; route();
+      if (n) logAct('xlsx', { n }); save(true); toast(t('importedN', { n })); location.hash = '#candidates'; route();
     }).catch(e => { console.error(e); toast(t('badFile')); });
   }
 
@@ -1349,6 +1504,7 @@
     const old = mk({ surname: 'بوزيد', name: 'سارة', fy: py, gridId: 'U_CONF', rank: 'mca', program: 'conf', facultyId: 'fdsp', deptId: 'sp', country: 'تونس', host: 'Université de Sousse', startDate: py + '-04-10', endDate: py + '-04-13', decision: 'accepted' });
     fillDocs(old);
     state.candidates.push(...list, old);
+    logAct('demo', { n: list.length });
     save(true); renderSide(); toast(t('demoAdded', { n: list.length }));
     location.hash = '#candidates'; route();
   }

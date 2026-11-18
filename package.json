@@ -1,7 +1,7 @@
 {
   "name": "tarabbusat",
   "productName": "انتقاء الحركية قصيرة المدى",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "تصنيف وتنقيط وترتيب ملفات الحركية قصيرة المدى في الخارج وفق القرار 345 المؤرخ في 09 مارس 2026",
   "main": "main.js",
   "author": "tarabbusat",

@@ -33,7 +33,7 @@
       ]),
       F('fdsp', '#b45309', 'كلية الحقوق والعلوم السياسية', 'Faculté de Droit et des Sciences Politiques', 'Faculty of Law and Political Science', [
         ['droit', 'قسم الحقوق', 'Département de Droit', 'Department of Law'],
-        ['sp', 'قسم العلوم السياسية', 'Département des Sciences Politiques', 'Department of Political Science']
+        ['sp', 'قسم العلوم السياسية والعلاقات الدولية', 'Département des Sciences Politiques et Relations Internationales', 'Department of Political Science and International Relations']
       ]),
       F('fsecsg', '#15803d', 'كلية العلوم الاقتصادية والتجارية وعلوم التسيير', 'Faculté des Sciences Économiques, Commerciales et des Sciences de Gestion', 'Faculty of Economics, Commerce and Management', [
         ['eco', 'قسم العلوم الاقتصادية', 'Département des Sciences Économiques', 'Department of Economics'],
