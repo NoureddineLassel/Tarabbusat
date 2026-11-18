@@ -1,0 +1,31 @@
+name: build
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            cmd: dist:win
+          - os: macos-latest
+            cmd: dist:mac
+          - os: ubuntu-latest
+            cmd: dist:linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run ${{ matrix.cmd }} -- --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarabbusat-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
