@@ -11,7 +11,11 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'app', 'index.html'));
   // فتح الروابط الخارجية في المتصفح الافتراضي
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    // الوثائق المرفقة تُفتح في نافذة داخل التطبيق
+    if (url.startsWith('blob:')) return { action: 'allow' };
+    shell.openExternal(url); return { action: 'deny' };
+  });
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file://')) { e.preventDefault(); shell.openExternal(url); } });
 }
 
