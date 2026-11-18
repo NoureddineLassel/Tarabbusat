@@ -47,6 +47,7 @@
   }
   let state = load();
   let prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch (e) { return {}; } })();
+  if (prefs.v !== 3) { prefs.theme = 'glass'; prefs.v = 3; try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch (e) { /* ignore */ } }
   let saveTimer = null;
   function save(now) {
     clearTimeout(saveTimer);
@@ -61,6 +62,9 @@
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const fmt = n => (Math.round(n * 100) / 100).toLocaleString(I.locale(), { maximumFractionDigits: 2 });
   const P = () => state.settings;
+  const splitScroll = () => window.matchMedia('(min-width: 1101px)').matches;
+  const getScroll = () => splitScroll() ? main.scrollTop : window.scrollY;
+  const setScroll = y => { if (splitScroll()) main.scrollTop = y; else window.scrollTo(0, y); };
   const nm = o => o ? (o[I.lang] || o.ar || '') : '';
   const code = gr => !gr ? '' : I.lang === 'ar' ? '\u2068' + gr.code + '\u2069' : gr.code.replace('ج', 'U').replace('م', 'R').replace('خ', 'S');
   function toast(msg) {
@@ -139,7 +143,7 @@
 
   /* ================= الإطار: الترويسة، شريط العنوان، القائمة ================= */
   const ic = (n, c) => window.UI_ICONS.icon(n, c);
-  const THEME_SW = { violet: '#5236c8', green: '#117a63', blue: '#2160c4', bordeaux: '#96284d', sand: '#a1661a', dark: '#1a1830' };
+  const THEME_SW = { glass: '', violet: '#5236c8', green: '#117a63', blue: '#2160c4', bordeaux: '#96284d', sand: '#a1661a', dark: '#1a1830' };
   const DEFAULT_ROLE = 'رئيس القسم المساعد';
   function roleText() { const r = P().vdTitle || DEFAULT_ROLE; return r === DEFAULT_ROLE ? t('role.default') : r; }
   function myDept() { const f = facById(P().myFaculty); return f && P().myDept ? f.depts.find(d => d.id === P().myDept) : null; }
@@ -160,7 +164,7 @@
     I.setLang(prefs.lang || 'ar');
     document.documentElement.lang = I.lang;
     document.documentElement.dir = I.dir();
-    document.documentElement.dataset.theme = prefs.theme || 'violet';
+    document.documentElement.dataset.theme = prefs.theme || 'glass';
     document.title = 'Tarabbusat — ' + t('app.title');
     renderChrome();
   }
@@ -175,7 +179,7 @@
       <div class="tools">
         <div class="tools-row">
           <div class="seg" role="group" aria-label="${t('lang')}">${[['ar', 'ع'], ['fr', 'FR'], ['en', 'EN']].map(([k, l]) => `<button class="${I.lang === k ? 'on' : ''}" data-act="set-lang" data-v="${k}" title="${k === 'ar' ? 'العربية' : k === 'fr' ? 'Français' : 'English'}">${l}</button>`).join('')}</div>
-          <div class="seg" role="group" aria-label="${t('theme')}">${Object.entries(THEME_SW).map(([k, c]) => `<button class="swatch ${(prefs.theme || 'violet') === k ? 'on' : ''}" style="background:${c}" data-act="set-theme" data-v="${k}" title="${t('theme.' + k)}" aria-label="${t('theme.' + k)}"></button>`).join('')}</div>
+          <div class="seg" role="group" aria-label="${t('theme')}">${Object.entries(THEME_SW).map(([k, c]) => `<button class="swatch ${k === 'glass' ? 'glass-sw' : ''} ${(prefs.theme || 'glass') === k ? 'on' : ''}" style="${c ? 'background:' + c : ''}" data-act="set-theme" data-v="${k}" title="${t('theme.' + k)}" aria-label="${t('theme.' + k)}"></button>`).join('')}</div>
         </div>
         <div class="tools-row">
           <button class="icon-btn menu-btn" data-act="menu" title="${t('menu')}">${ic('menu')}</button>
@@ -196,7 +200,7 @@
     [y - 1, y, y + 1].forEach(v => years.add(String(v)));
     document.getElementById('side').innerHTML = `<nav id="nav">${nav.map(([v, i, l]) => `<a href="#${v}" data-v="${v}">${ic(i)}<span>${l}</span></a>`).join('')}</nav>
       ${MODE === 'admin' ? `<div class="fy"><label>${t('fy')}<select id="fySelect">${[...years].sort().map(v => `<option ${v === String(st.fy) ? 'selected' : ''}>${v}</option>`).join('')}</select></label></div>` : ''}
-      <div class="ver">Tarabbusat 1.2</div><div class="side-globe">${ic('globe')}</div>`;
+      <div class="ver">Tarabbusat 1.3</div><div class="side-globe">${ic('globe')}</div>`;
     const fy = document.getElementById('fySelect');
     if (fy) fy.onchange = e => { P().fy = e.target.value; save(); renderChrome(); route(); };
     markNav();
@@ -244,7 +248,7 @@
     cur = null;
     if (MODE === 'candidate') {
       if (v === 'guide') viewGuide(); else viewMine();
-      window.scrollTo(0, 0); return;
+      setScroll(0); return;
     }
     switch (v) {
       case 'candidates': viewCandidates(); break;
@@ -259,7 +263,7 @@
       case 'settings': viewSettings(); break;
       default: viewDashboard();
     }
-    window.scrollTo(0, 0);
+    setScroll(0);
   }
   window.addEventListener('hashchange', route);
   function topbar(title, actions) {
@@ -922,7 +926,7 @@
         m.classList.add('on'); bd.onclick = e => { if (e.target.getAttribute('data-m')) { m.classList.remove('on'); bd.onclick = null; } };
         break;
       }
-      case 'tab': edTab = b.dataset.t; renderEditor(); window.scrollTo(0, 0); break;
+      case 'tab': edTab = b.dataset.t; renderEditor(); setScroll(0); break;
       case 'add-entry': {
         const gr = S.gridById(cur.gridId), crit = gr.criteria.find(x => x.id === b.dataset.c);
         cur.scores = cur.scores || {};
@@ -1099,7 +1103,7 @@
   /* ================= الترتيب ================= */
   function rankingGroups() { return S.rankCandidates(fyCands(), P(), { groupBy: P().groupBy || [], gridId: rankGrid || undefined, all: state.candidates }); }
   function viewRanking(keepScroll) {
-    const y = window.scrollY;
+    const y = getScroll();
     const gb = P().groupBy || [];
     const groups = rankingGroups();
     let h = topbar(t('nav.ranking') + ' — ' + esc(P().fy), `
@@ -1133,7 +1137,7 @@
     }
     main.innerHTML = h;
     document.getElementById('rg').addEventListener('change', e => { rankGrid = e.target.value; viewRanking(); });
-    if (keepScroll) window.scrollTo(0, y);
+    if (keepScroll) setScroll(y);
   }
 
   /* ================= الحصص ================= */
@@ -1169,7 +1173,7 @@
   }
   const FCLS = { cancel: 'b-mut', future: 'b-info', ok: 'b-ok', pending: 'b-warn', late: 'b-bad' };
   function viewFollowup(keepScroll) {
-    const y = window.scrollY, rows = followRows();
+    const y = getScroll(), rows = followRows();
     let h = topbar(t('nav.followup') + ' — ' + esc(P().fy), `<button class="btn" data-act="print-follow">🖶 ${t('btn.printFollow')}</button>`);
     h += `<div class="card small muted">${t('fu.intro')}<div style="margin-top:6px">${t('fu.delay')} <input type="number" min="1" style="width:80px" data-set="followDays" data-rerender="1" value="${esc(P().followDays || 30)}"> ${t('days')}</div></div>`;
     if (!rows.length) h += `<div class="card empty">${t('fu.none')}</div>`;
@@ -1186,7 +1190,7 @@
           <label class="f"><span>${t('f.notes')}</span><input type="text" data-fu="note" data-id="${c.id}" value="${esc(fu.note || '')}"></label></div></div></div>`;
     }
     main.innerHTML = h;
-    if (keepScroll) window.scrollTo(0, y);
+    if (keepScroll) setScroll(y);
   }
 
   /* ================= الشبكات ================= */

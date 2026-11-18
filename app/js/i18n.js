@@ -9,7 +9,7 @@
     'fy': ['السنة المالية', 'Exercice budgétaire', 'Financial year'],
     'lang': ['اللغة', 'Langue', 'Language'],
     'theme': ['المظهر', 'Thème', 'Theme'],
-    'theme.green': ['أخضر', 'Vert', 'Green'], 'theme.blue': ['أزرق', 'Bleu', 'Blue'], 'theme.bordeaux': ['عنابي', 'Bordeaux', 'Burgundy'],
+    'theme.glass': ['زجاج سائل (Liquid Glass)', 'Verre liquide', 'Liquid Glass'], 'theme.green': ['أخضر', 'Vert', 'Green'], 'theme.blue': ['أزرق', 'Bleu', 'Blue'], 'theme.bordeaux': ['عنابي', 'Bordeaux', 'Burgundy'],
     'theme.violet': ['بنفسجي', 'Violet', 'Violet'], 'theme.sand': ['رملي', 'Sable', 'Sand'], 'theme.dark': ['داكن', 'Sombre', 'Dark'],
     'nav.dashboard': ['لوحة القيادة', 'Tableau de bord', 'Dashboard'],
     'nav.candidates': ['ملفات المترشحين', 'Dossiers des candidats', 'Applications'],
